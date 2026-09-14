@@ -1,0 +1,166 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "authorship_tag": "ABX9TyOwg0JAJVMyamF5FlkUEwia",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/eliasrbarbour/AAI614_eliasbarbour/blob/main/Data_Scraping\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "mZ752ANRjNRg"
+      },
+      "outputs": [],
+      "source": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "Python program to scrape the data in Table 2 into a pandas DataFrame\n",
+        "Canada's national surveillance system that monitors the spread of flu and flu-like illnesses."
+      ],
+      "metadata": {
+        "id": "3tp-o9wfjSuQ"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import pandas as pd\n",
+        "import requests\n",
+        "import time\n",
+        "from bs4 import BeautifulSoup\n",
+        "from io import StringIO\n",
+        "\n",
+        "URL = (\"https://www.canada.ca/en/public-health/services/surveillance/\"\n",
+        "       \"respiratory-virus-detections-canada/2018-2019/\"\n",
+        "       \"respiratory-virus-detections-isolations-week-01-ending-january-5-2019.html\")\n",
+        "\n",
+        "# Maps the table's row labels -> proper province/territory names.\n",
+        "# Note the mix: some are lab rows, some are \"Province of X\" subtotal rows.\n",
+        "PROVINCE_MAP = {\n",
+        "    'Newfoundland':             'Newfoundland and Labrador',\n",
+        "    'Prince Edward Island':     'Prince Edward Island',\n",
+        "    'Nova Scotia':              'Nova Scotia',\n",
+        "    'New Brunswick':            'New Brunswick',\n",
+        "    'Province of Québec':       'Quebec',\n",
+        "    'Province of Ontario':      'Ontario',\n",
+        "    'Manitoba':                 'Manitoba',\n",
+        "    'Province of Saskatchewan': 'Saskatchewan',\n",
+        "    'Province of Alberta':      'Alberta',\n",
+        "    'British Columbia':         'British Columbia',\n",
+        "    'Yukon':                    'Yukon',\n",
+        "    'Northwest Territories':    'Northwest Territories',\n",
+        "    'Nunavut':                  'Nunavut',\n",
+        "}\n",
+        "\n",
+        "\n",
+        "def get_with_retries(url, attempts=4, timeout=120):\n",
+        "    headers = {'User-Agent': 'Mozilla/5.0'}\n",
+        "    for i in range(attempts):\n",
+        "        try:\n",
+        "            r = requests.get(url, headers=headers, timeout=timeout)\n",
+        "            r.raise_for_status()\n",
+        "            return r\n",
+        "        except requests.exceptions.RequestException as e:\n",
+        "            print(f\"Attempt {i+1} failed: {type(e).__name__}\")\n",
+        "            if i < attempts - 1:\n",
+        "                time.sleep(5)\n",
+        "    raise RuntimeError(\"All attempts failed\")\n",
+        "\n",
+        "\n",
+        "# Fetch the page (single call, with retries)\n",
+        "resp = get_with_retries(URL)\n",
+        "soup = BeautifulSoup(resp.text, 'html.parser')\n",
+        "\n",
+        "# Find Table 2 by its caption (don't rely on table index — the page has many tables)\n",
+        "target = None\n",
+        "for t in soup.find_all('table'):\n",
+        "    cap = t.find('caption')\n",
+        "    if cap and cap.get_text().strip().startswith('Table 2'):\n",
+        "        target = t\n",
+        "        break\n",
+        "if target is None:\n",
+        "    raise ValueError('Table 2 not found')\n",
+        "\n",
+        "df = pd.read_html(StringIO(str(target)))[0]\n",
+        "\n",
+        "# The header spans two rows, so pandas may return a MultiIndex — flatten it\n",
+        "if isinstance(df.columns, pd.MultiIndex):\n",
+        "    df.columns = [' '.join(str(p) for p in col if 'Unnamed' not in str(p)).strip()\n",
+        "                  for col in df.columns]\n",
+        "df.columns = [str(c).strip() for c in df.columns]\n",
+        "\n",
+        "label_col = df.columns[0]\n",
+        "df[label_col] = df[label_col].astype(str).str.strip()\n",
+        "\n",
+        "# Keep only province/territory rows — drops labs, regional subtotals, and CANADA\n",
+        "df = df[df[label_col].isin(PROVINCE_MAP)].copy()\n",
+        "df.insert(0, 'Province', df[label_col].map(PROVINCE_MAP))\n",
+        "df = df.drop(columns=[label_col])\n",
+        "\n",
+        "# Convert counts to numbers ('N.A.' becomes NaN)\n",
+        "for c in df.columns[1:]:\n",
+        "    df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '', regex=False),\n",
+        "                          errors='coerce')\n",
+        "\n",
+        "df = df.reset_index(drop=True)\n",
+        "print(df.shape)\n",
+        "df"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "uD2391aUjXHM",
+        "outputId": "ee962041-6d59-417a-eb78-7348b0993fc6"
+      },
+      "execution_count": null,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Attempt 1 failed: ReadTimeout\n",
+            "Attempt 2 failed: ReadTimeout\n",
+            "Attempt 3 failed: ReadTimeout\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "tables = pd.read_html(URL, match='Table 2')\n",
+        "df = tables[0]"
+      ],
+      "metadata": {
+        "id": "KKhLRIjcjeYe"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
